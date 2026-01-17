@@ -1,206 +1,122 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:percent_indicator/circular_percent_indicator.dart';
 import 'package:vibration/vibration.dart';
-import 'package:torch_light/torch_light.dart';
-import 'package:ghost_signal/services/mesh_service.dart'; // Import Mesh Service
+import 'package:ghostsignal/screens/safety_check_screen.dart';
+import 'package:ghostsignal/services/siren_service.dart';
 
 class CountdownScreen extends StatefulWidget {
-  const CountdownScreen({super.key});
-
+  final String triggerCause;
+  const CountdownScreen({super.key, this.triggerCause = "Manual"});
   @override
   State<CountdownScreen> createState() => _CountdownScreenState();
 }
 
 class _CountdownScreenState extends State<CountdownScreen> {
-  int _timeLeft = 3;
-  double _percent = 1.0;
+  late int _timeLeft;
   Timer? _timer;
-  bool _isCritical = false; // State when timer hits 0
-
-  // Create an instance of our Mesh Service
-  final MeshService _meshService = MeshService();
+  final SirenService _siren = SirenService();
 
   @override
   void initState() {
     super.initState();
-    startCountdown();
+    // Voice = Urgent (5s), Motion = Standard (15s)
+    _timeLeft = (widget.triggerCause == "Voice") ? 5 : 15;
+    _startTimer();
   }
 
-  void startCountdown() {
-    // 1. Start Aggressive Vibration (Heartbeat pattern)
-    // pattern: [wait, vibrate, wait, vibrate...]
-    Vibration.vibrate(
-        pattern: [500, 1000, 500, 1000, 500, 1000],
-        intensities: [128, 255, 128, 255, 128, 255]);
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (!mounted) return; // Safety check
-
+  void _startTimer() {
+    Vibration.vibrate(pattern: [500, 500], repeat: 1);
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) return;
       setState(() {
-        if (_timeLeft > 0) {
+        if (_timeLeft > 0)
           _timeLeft--;
-          _percent = _timeLeft / 3; // Calculate percentage for circle
-        } else {
-          // 2. TIME IS UP -> TRIGGER SOS
-          _isCritical = true;
+        else {
           _timer?.cancel();
-          triggerSOS();
+          _goToSafetyCheck();
         }
       });
     });
   }
 
-  Future<void> triggerSOS() async {
-    // STOP Vibration loop and start CONTINUOUS SOS Vibration
-    Vibration.cancel();
-    Vibration.vibrate(duration: 10000); // Vibrate for 10 seconds straight
-
-    // FLASH LIGHT LOGIC (Uncomment on Real Device)
-    /*
-    try {
-      await TorchLight.enableTorch(); 
-      // Add strobe logic here later
-    } catch (e) {
-      // Handle error
-    }
-    */
-
-    // --- START OFFLINE MESH BROADCAST ---
-    print("GHOST SIGNAL: INITIALIZING MESH NETWORK...");
-
-    // 1. Ensure we have permission to use Bluetooth/Location
-    await _meshService.checkPermissions();
-
-    // 2. Start Broadcasting "SOS" to nearby phones
-    await _meshService.startBroadcastingSOS();
-
-    print("GHOST SIGNAL BROADCASTING: SOS PACKETS ARE FLYING!");
-
-    // TODO: Send SMS as Backup (Next Phase)
+  void _goToSafetyCheck() {
+    Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+            builder: (context) =>
+                SafetyCheckScreen(triggerCause: widget.triggerCause)));
   }
 
-  void cancelSOS() {
+  void _cancel() {
     _timer?.cancel();
     Vibration.cancel();
-    // Stop broadcasting if we cancel (Optional, but good practice)
-    // Nearby().stopAdvertising();
-    Navigator.pop(context); // Go back to Home Screen
+    _siren.stopSiren();
+    Navigator.pop(context);
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    Vibration.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // Changes color based on state: Red (Panic) -> Black (Active Mode)
-      backgroundColor: _isCritical ? Colors.black : const Color(0xFFB71C1C),
-      body: SafeArea(
+      backgroundColor: Colors.red[900],
+      body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // TOP TEXT
-            Text(
-              _isCritical ? "GHOST SIGNAL SENT" : "IMPACT DETECTED",
-              style: GoogleFonts.bebasNeue(
-                fontSize: 40,
-                color: Colors.white,
-                letterSpacing: 2,
-              ),
+            const Icon(Icons.warning_amber_rounded,
+                size: 80, color: Colors.white),
+            const SizedBox(height: 20),
+            Text("IMPACT DETECTED",
+                style: const TextStyle(
+                    fontSize: 28,
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold)),
+            Text("Cause: ${widget.triggerCause}",
+                style: const TextStyle(color: Colors.white70)),
+            const SizedBox(height: 40),
+
+            CircularPercentIndicator(
+              radius: 80.0,
+              lineWidth: 12.0,
+              percent: _timeLeft / ((widget.triggerCause == "Voice") ? 5 : 15),
+              center: Text("$_timeLeft",
+                  style: const TextStyle(
+                      fontSize: 60,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold)),
+              progressColor: Colors.white,
+              backgroundColor: Colors.white24,
+              circularStrokeCap: CircularStrokeCap.round,
             ),
-
-            const SizedBox(height: 10),
-
-            Text(
-              _isCritical
-                  ? "Rescuers are being notified via Mesh."
-                  : "Sending SOS in...",
-              style: GoogleFonts.lato(
-                fontSize: 18,
-                color: Colors.white70,
-              ),
-            ),
-
             const SizedBox(height: 50),
 
-            // THE COUNTDOWN CIRCLE
-            if (!_isCritical)
-              CircularPercentIndicator(
-                radius: 120.0,
-                lineWidth: 15.0,
-                percent: _percent,
-                center: Text(
-                  "$_timeLeft",
-                  style: GoogleFonts.bebasNeue(
-                    fontSize: 100,
-                    color: Colors.white,
-                  ),
-                ),
-                progressColor: Colors.white,
-                backgroundColor: Colors.white24,
-                circularStrokeCap: CircularStrokeCap.round,
-                animation: true,
-                animateFromLastPercent: true,
-                animationDuration: 1000,
+            // FIXED: BIG BUTTON (NO SWIPE)
+            SizedBox(
+              width: 200,
+              height: 70,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(35))),
+                onPressed: _cancel,
+                child: const Text("I AM SAFE",
+                    style: TextStyle(
+                        color: Colors.red,
+                        fontSize: 22,
+                        fontWeight: FontWeight.bold)),
               ),
+            ),
 
-            // THE SIGNAL ICON (Appears after countdown)
-            if (_isCritical)
-              const Icon(
-                Icons.wifi_tethering_error_rounded, // The "Signal" Icon
-                size: 200,
-                color: Colors.redAccent,
-              ),
-
-            const SizedBox(height: 60),
-
-            // CANCEL BUTTON
-            if (!_isCritical)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: SizedBox(
-                  width: double.infinity,
-                  height: 60,
-                  child: ElevatedButton(
-                    onPressed: cancelSOS,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(30),
-                      ),
-                    ),
-                    child: Text(
-                      "I AM SAFE (CANCEL)",
-                      style: GoogleFonts.bebasNeue(
-                        fontSize: 24,
-                        color: const Color(0xFFB71C1C),
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-
-            // POST-TRIGGER STATUS TEXT
-            if (_isCritical)
-              Padding(
-                padding: const EdgeInsets.all(20.0),
-                child: Text(
-                  "Beacon Active.\nBattery Optimization: ON\nMesh Network: BROADCASTING",
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.sourceCodePro(
-                    // Hacker style font
-                    color: Colors.greenAccent,
-                    fontSize: 14,
-                  ),
-                ),
-              )
+            const SizedBox(height: 20),
+            const Text("Do nothing to trigger SOS",
+                style: TextStyle(color: Colors.white54)),
           ],
         ),
       ),
