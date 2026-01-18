@@ -1,1 +1,7 @@
 #include "Generated.xcconfig"
+
+// Explicitly set the build mode (Safety check)
+FLUTTER_BUILD_MODE=release
+
+// Optimization: Ensure Swift compiles with Whole Module Optimization in release
+SWIFT_OPTIMIZATION_LEVEL = -Owholemodule
