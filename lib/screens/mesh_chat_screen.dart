@@ -1,12 +1,12 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:ghostsignal/services/mesh_service.dart';
+import 'package:ghost_signal/services/mesh_service.dart'; // Standardized package name
 
-// --- DATA MODELS ---
-// Ensure your MeshMessage model looks something like this:
+// --- DATA MODEL (Included for context) ---
 /*
 class MeshMessage {
   final String id;
@@ -43,26 +43,30 @@ class _MeshChatScreenState extends State<MeshChatScreen> with TickerProviderStat
   late StreamSubscription _chatSubscription;
   bool _isEmergencyChannel = false;
   
-  // Animation
+  // Animation Controllers
   late AnimationController _pulseController;
+  late AnimationController _radarController;
 
   @override
   void initState() {
     super.initState();
     _loadName();
     
-    // Status Pulse Animation
+    // 1. Status Pulse (Breathing effect)
     _pulseController = AnimationController(
       vsync: this, 
       duration: const Duration(seconds: 2)
     )..repeat(reverse: true);
 
-    // Listen to incoming mesh packets
+    // 2. Radar/Scanning Animation (For empty state)
+    _radarController = AnimationController(
+      vsync: this,
+      duration: const Duration(seconds: 4)
+    )..repeat();
+
+    // 3. Listen to Stream
     _chatSubscription = widget.meshService.messageStream.listen((_) {
-      if (mounted) {
-        setState(() {}); // Refresh list
-        _scrollToBottom();
-      }
+      if (mounted) setState(() {}); 
     });
   }
 
@@ -71,24 +75,11 @@ class _MeshChatScreenState extends State<MeshChatScreen> with TickerProviderStat
     setState(() => _myName = prefs.getString('my_name') ?? "Survivor");
   }
 
-  void _scrollToBottom() {
-    if (_scrollController.hasClients) {
-      // Small delay to ensure render box is ready
-      Future.delayed(const Duration(milliseconds: 100), () {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
-          curve: Curves.easeOutQuad,
-        );
-      });
-    }
-  }
-
   void _sendMessage() {
     final text = _msgCtrl.text.trim();
     if (text.isEmpty) return;
     
-    // Haptic Feedback based on urgency
+    // Haptic Feedback
     if (_isEmergencyChannel) {
       HapticFeedback.heavyImpact();
     } else {
@@ -98,11 +89,10 @@ class _MeshChatScreenState extends State<MeshChatScreen> with TickerProviderStat
     widget.meshService.broadcastChat(
       name: _myName,
       text: text,
-      isEmergency: _isEmergencyChannel, // Flag for high priority
+      isEmergency: _isEmergencyChannel,
     );
     
     _msgCtrl.clear();
-    _scrollToBottom();
   }
 
   @override
@@ -111,131 +101,209 @@ class _MeshChatScreenState extends State<MeshChatScreen> with TickerProviderStat
     _msgCtrl.dispose();
     _scrollController.dispose();
     _pulseController.dispose();
+    _radarController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final messages = widget.meshService.chatMessages;
+    // Get messages and REVERSE them for the ListView (standard chat behavior)
+    final messages = widget.meshService.chatMessages.reversed.toList();
+    
+    // Dynamic Colors
     final themeColor = _isEmergencyChannel ? const Color(0xFFFF2A2A) : const Color(0xFF00F0FF);
     final bgColor = const Color(0xFF020617);
 
     return Scaffold(
       backgroundColor: bgColor,
-      appBar: _buildAppBar(themeColor),
-      body: Column(
-        children: [
-          // 1. Network Header
-          _buildNetworkBanner(themeColor),
-          
-          // 2. Chat Area
-          Expanded(
-            child: Stack(
+      // Tap outside to dismiss keyboard
+      body: GestureDetector(
+        onTap: () => FocusScope.of(context).unfocus(),
+        child: Stack(
+          children: [
+            // --- 1. TECH BACKGROUND ---
+            Positioned.fill(
+              child: CustomPaint(
+                painter: TechGridPainter(
+                  color: themeColor.withOpacity(0.05),
+                  scanValue: _radarController.value
+                ),
+              ),
+            ),
+
+            // --- 2. MAIN CONTENT ---
+            Column(
               children: [
-                // Background Noise
-                 Opacity(
-                  opacity: 0.05,
-                  child: Container(
-                    decoration: BoxDecoration(
-                      gradient: RadialGradient(
-                        center: Alignment.center,
-                        radius: 1.0,
-                        colors: [themeColor, Colors.transparent],
-                      )
-                    ),
-                  ),
-                ),
+                _buildAppBar(themeColor),
+                _buildNetworkBanner(themeColor),
                 
-                // Message List
-                ListView.builder(
-                  controller: _scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-                  itemCount: messages.length,
-                  itemBuilder: (ctx, i) => _buildMessageBubble(messages[i], themeColor),
+                // Chat Area
+                Expanded(
+                  child: messages.isEmpty 
+                    ? _buildEmptyState(themeColor)
+                    : ListView.builder(
+                        controller: _scrollController,
+                        reverse: true, // Critical for chat apps
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                        itemCount: messages.length,
+                        physics: const BouncingScrollPhysics(),
+                        itemBuilder: (ctx, i) => _buildMessageBubble(messages[i], themeColor),
+                      ),
                 ),
+
+                // Input Area
+                _buildInputArea(themeColor),
               ],
             ),
-          ),
-
-          // 3. Input Zone
-          _buildInputArea(themeColor),
-        ],
+            
+            // --- 3. EMERGENCY OVERLAY (Subtle Vignette) ---
+            if (_isEmergencyChannel)
+              IgnorePointer(
+                child: AnimatedBuilder(
+                  animation: _pulseController,
+                  builder: (context, child) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        gradient: RadialGradient(
+                          center: Alignment.center,
+                          radius: 1.5,
+                          colors: [
+                            Colors.transparent,
+                            Colors.red.withOpacity(0.1 * _pulseController.value)
+                          ],
+                          stops: const [0.6, 1.0]
+                        )
+                      ),
+                    );
+                  },
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
 
-  // --- WIDGETS ---
+  // --- COMPONENT WIDGETS ---
 
-  PreferredSizeWidget _buildAppBar(Color themeColor) {
-    return AppBar(
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      flexibleSpace: ClipRect(
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-          child: Container(color: Colors.black.withOpacity(0.5)),
+  Widget _buildAppBar(Color themeColor) {
+    return SafeArea(
+      bottom: false,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: themeColor.withOpacity(0.1))),
+          color: Colors.black.withOpacity(0.4),
         ),
-      ),
-      title: Row(
-        children: [
-          Icon(Icons.hub, color: themeColor, size: 20),
-          const SizedBox(width: 10),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                _isEmergencyChannel ? "EMERGENCY_NET" : "GHOST_MESH_v1",
-                style: TextStyle(
-                  color: themeColor,
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 2
-                ),
+        child: Row(
+          children: [
+            // Back Button
+            InkWell(
+              onTap: () => Navigator.pop(context),
+              child: Icon(Icons.arrow_back_ios_new, color: themeColor, size: 20),
+            ),
+            const SizedBox(width: 16),
+            
+            // Title Info
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Text(
+                        _isEmergencyChannel ? "EMERGENCY_NET" : "GHOST_MESH_v1",
+                        style: TextStyle(
+                          color: themeColor,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.5,
+                          fontFamily: "monospace" // Ensure you have a mono font or default
+                        ),
+                      ),
+                      if (_isEmergencyChannel) ...[
+                        const SizedBox(width: 8),
+                        _buildBlinkingIcon(Icons.warning, Colors.red)
+                      ]
+                    ],
+                  ),
+                  Text(
+                    "NODES: ${widget.meshService.activeNodes} | SIGNAL: STRONG",
+                    style: TextStyle(color: Colors.white.withOpacity(0.5), fontSize: 10, fontFamily: "monospace"),
+                  ),
+                ],
               ),
-              Text(
-                "NODES: ${widget.meshService.activeNodes} | LATENCY: ~45ms",
-                style: const TextStyle(color: Colors.white38, fontSize: 10),
-              ),
-            ],
-          ),
-        ],
-      ),
-      actions: [
-        // Channel Toggle
-        Center(
-          child: Padding(
-            padding: const EdgeInsets.only(right: 16.0),
-            child: InkWell(
+            ),
+
+            // Toggle Switch
+            InkWell(
               onTap: () => setState(() => _isEmergencyChannel = !_isEmergencyChannel),
-              borderRadius: BorderRadius.circular(20),
+              borderRadius: BorderRadius.circular(4),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 300),
                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
-                  color: _isEmergencyChannel ? Colors.red.withOpacity(0.2) : Colors.cyan.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: themeColor.withOpacity(0.5))
+                  color: _isEmergencyChannel ? Colors.red.withOpacity(0.2) : Colors.transparent,
+                  border: Border.all(color: _isEmergencyChannel ? Colors.red : Colors.grey.withOpacity(0.3)),
+                  borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  _isEmergencyChannel ? "SOS ONLY" : "PUBLIC",
-                  style: TextStyle(color: themeColor, fontSize: 10, fontWeight: FontWeight.bold),
+                  _isEmergencyChannel ? "SOS ACTIVE" : "PUBLIC",
+                  style: TextStyle(
+                    color: _isEmergencyChannel ? Colors.red : Colors.grey,
+                    fontSize: 10, 
+                    fontWeight: FontWeight.bold
+                  ),
                 ),
               ),
             ),
-          ),
-        )
-      ],
+          ],
+        ),
+      ),
     );
   }
 
   Widget _buildNetworkBanner(Color themeColor) {
-    return Container(
-      width: double.infinity,
+    return SizedBox(
       height: 2,
       child: LinearProgressIndicator(
-        value: null, // Indeterminate loader for "Scanning" feel
+        minHeight: 2,
         backgroundColor: Colors.transparent,
-        valueColor: AlwaysStoppedAnimation<Color>(themeColor.withOpacity(0.2)),
+        valueColor: AlwaysStoppedAnimation<Color>(themeColor),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(Color themeColor) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          AnimatedBuilder(
+            animation: _radarController,
+            builder: (context, child) {
+              return Container(
+                width: 150, height: 150,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: themeColor.withOpacity(0.3)),
+                  gradient: RadialGradient(
+                    colors: [themeColor.withOpacity(0.1), Colors.transparent],
+                    stops: [_radarController.value, _radarController.value + 0.1]
+                  )
+                ),
+                child: Center(
+                  child: Icon(Icons.radar, color: themeColor.withOpacity(0.5), size: 40),
+                ),
+              );
+            },
+          ),
+          const SizedBox(height: 20),
+          Text(
+            "SCANNING MESH FREQUENCIES...",
+            style: TextStyle(color: themeColor.withOpacity(0.7), letterSpacing: 2, fontSize: 12),
+          ),
+        ],
       ),
     );
   }
@@ -244,147 +312,204 @@ class _MeshChatScreenState extends State<MeshChatScreen> with TickerProviderStat
     final bool isMe = msg.senderName == _myName;
     final bool isAlert = msg.isEmergency;
     
-    // Dynamic Bubble Color
-    Color bubbleBorder = isMe 
-        ? themeColor.withOpacity(0.5) 
-        : (isAlert ? Colors.redAccent : Colors.white12);
-    Color bubbleBg = isMe 
-        ? themeColor.withOpacity(0.05) 
-        : (isAlert ? Colors.red.withOpacity(0.1) : const Color(0xFF1E293B));
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 16),
-      child: Column(
-        crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
-        children: [
-          // Metadata Row (Sender + Hops)
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (!isMe && isAlert) 
-                const Padding(
-                  padding: EdgeInsets.only(right: 5),
-                  child: Icon(Icons.warning_amber_rounded, color: Colors.red, size: 12),
-                ),
-              Text(
-                isMe ? "YOU" : msg.senderName.toUpperCase(),
-                style: TextStyle(
-                  color: isAlert ? Colors.redAccent : (isMe ? themeColor : Colors.grey),
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1
-                ),
-              ),
-              const SizedBox(width: 8),
-              if (!isMe)
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: Colors.black,
-                    border: Border.all(color: Colors.white12),
-                    borderRadius: BorderRadius.circular(4)
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 16),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+        child: Column(
+          crossAxisAlignment: isMe ? CrossAxisAlignment.end : CrossAxisAlignment.start,
+          children: [
+            // Header: Name + Hops
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (!isMe && isAlert) 
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.report, color: Colors.red, size: 12),
                   ),
-                  child: Text(
-                    msg.hops == 0 ? "DIRECT" : "${msg.hops} HOPS",
-                    style: const TextStyle(color: Colors.white38, fontSize: 8),
+                Text(
+                  isMe ? "YOU" : msg.senderName.toUpperCase(),
+                  style: TextStyle(
+                    color: isAlert ? Colors.redAccent : (isMe ? themeColor : Colors.grey),
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 1,
                   ),
                 ),
-            ],
-          ),
-          
-          const SizedBox(height: 4),
+                const SizedBox(width: 6),
+                if (!isMe)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.white24),
+                      borderRadius: BorderRadius.circular(2)
+                    ),
+                    child: Text(
+                      msg.hops == 0 ? "DIRECT" : "${msg.hops} HOPS",
+                      style: const TextStyle(color: Colors.white38, fontSize: 8),
+                    ),
+                  )
+              ],
+            ),
+            
+            const SizedBox(height: 4),
 
-          // Message Body
-          Container(
-            constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.75),
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: bubbleBg,
-              borderRadius: BorderRadius.only(
-                topLeft: const Radius.circular(12),
-                topRight: const Radius.circular(12),
-                bottomLeft: Radius.circular(isMe ? 12 : 2),
-                bottomRight: Radius.circular(isMe ? 2 : 12),
+            // Message Body (Glassmorphism)
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: isMe 
+                  ? themeColor.withOpacity(0.1) 
+                  : (isAlert ? Colors.red.withOpacity(0.15) : const Color(0xFF1E293B)),
+                border: Border(
+                  left: isMe ? BorderSide.none : BorderSide(color: isAlert ? Colors.red : themeColor.withOpacity(0.3), width: 2),
+                  right: isMe ? BorderSide(color: themeColor.withOpacity(0.5), width: 2) : BorderSide.none,
+                  top: BorderSide(color: Colors.white.withOpacity(0.05)),
+                  bottom: BorderSide(color: Colors.white.withOpacity(0.05)),
+                ),
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(4),
+                  topRight: const Radius.circular(4),
+                  bottomLeft: Radius.circular(isMe ? 4 : 0),
+                  bottomRight: Radius.circular(isMe ? 0 : 4),
+                ),
               ),
-              border: Border.all(color: bubbleBorder),
-            ),
-            child: Text(
-              msg.content,
-              style: const TextStyle(
-                color: Colors.white, 
-                height: 1.4,
-                fontSize: 14
+              child: Text(
+                msg.content,
+                style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.4),
               ),
             ),
-          ),
-          
-          const SizedBox(height: 4),
-          
-          // Time Calculation
-          Text(
-            _formatTime(msg.timestamp),
-            style: const TextStyle(color: Colors.white24, fontSize: 10),
-          ),
-        ],
+            
+            // Timestamp
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                _formatTime(msg.timestamp),
+                style: TextStyle(color: Colors.white.withOpacity(0.2), fontSize: 9),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildInputArea(Color themeColor) {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 12, 16, 30),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0B1121),
-        border: Border(top: BorderSide(color: Colors.white.withOpacity(0.05))),
-      ),
-      child: Row(
-        children: [
-          // Animated Status Indicator
-          AnimatedBuilder(
-            animation: _pulseController,
-            builder: (context, child) {
-              return Container(
-                width: 10, height: 10,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: themeColor.withOpacity(_pulseController.value),
-                  boxShadow: [BoxShadow(color: themeColor, blurRadius: 5 * _pulseController.value)]
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ImageFilter.blur(sigmaX: 5, sigmaY: 5),
+        child: Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.6),
+            border: Border(top: BorderSide(color: themeColor.withOpacity(0.2))),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Container(
+                  height: 45,
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.05),
+                    borderRadius: BorderRadius.circular(4),
+                    border: Border.all(color: Colors.white10)
+                  ),
+                  child: TextField(
+                    controller: _msgCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    cursorColor: themeColor,
+                    decoration: InputDecoration(
+                      hintText: _isEmergencyChannel ? "BROADCAST ALERT..." : "Enter command...",
+                      hintStyle: TextStyle(color: Colors.white.withOpacity(0.2)),
+                      border: InputBorder.none,
+                      suffixIcon: _isEmergencyChannel ? const Icon(Icons.priority_high, color: Colors.red, size: 16) : null
+                    ),
+                    textInputAction: TextInputAction.send,
+                    onSubmitted: (_) => _sendMessage(),
+                  ),
                 ),
-              );
-            },
-          ),
-          const SizedBox(width: 15),
-          
-          // Input Field
-          Expanded(
-            child: TextField(
-              controller: _msgCtrl,
-              style: const TextStyle(color: Colors.white),
-              cursorColor: themeColor,
-              decoration: InputDecoration(
-                hintText: _isEmergencyChannel ? "BROADCAST ALERT..." : "Type message...",
-                hintStyle: TextStyle(color: Colors.white.withOpacity(0.3)),
-                isDense: true,
-                border: InputBorder.none,
               ),
-              onSubmitted: (_) => _sendMessage(),
-            ),
+              const SizedBox(width: 12),
+              
+              // Tactical Send Button
+              Container(
+                height: 45, width: 45,
+                decoration: BoxDecoration(
+                  color: themeColor.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: themeColor.withOpacity(0.3))
+                ),
+                child: IconButton(
+                  icon: Icon(Icons.send, color: themeColor, size: 20),
+                  onPressed: _sendMessage,
+                ),
+              )
+            ],
           ),
-          
-          // Send Button
-          IconButton(
-            onPressed: _sendMessage,
-            icon: Icon(Icons.send_rounded, color: themeColor),
-          )
-        ],
+        ),
       ),
     );
   }
 
-  String _formatTime(DateTime time) {
-    final diff = DateTime.now().difference(time);
-    if (diff.inSeconds < 60) return "Just now";
-    if (diff.inMinutes < 60) return "${diff.inMinutes}m ago";
-    return "${diff.inHours}h ago";
+  Widget _buildBlinkingIcon(IconData icon, Color color) {
+    return AnimatedBuilder(
+      animation: _pulseController,
+      builder: (context, child) {
+        return Opacity(
+          opacity: 0.5 + (_pulseController.value * 0.5),
+          child: Icon(icon, color: color, size: 16),
+        );
+      },
+    );
   }
+
+  String _formatTime(DateTime time) {
+    final now = DateTime.now();
+    final diff = now.difference(time);
+    if (diff.inSeconds < 60) return "T-MINUS 00:00:${diff.inSeconds.toString().padLeft(2, '0')}";
+    if (diff.inMinutes < 60) return "${diff.inMinutes} MIN AGO";
+    return "${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}";
+  }
+}
+
+// --- BACKGROUND PAINTER ---
+class TechGridPainter extends CustomPainter {
+  final Color color;
+  final double scanValue;
+
+  TechGridPainter({required this.color, required this.scanValue});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+
+    // Draw Grid
+    const double step = 40;
+    for (double x = 0; x < size.width; x += step) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (double y = 0; y < size.height; y += step) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+
+    // Draw Scanline
+    final scanY = size.height * scanValue;
+    final scanPaint = Paint()
+      ..shader = LinearGradient(
+        begin: Alignment.topCenter,
+        end: Alignment.bottomCenter,
+        colors: [Colors.transparent, color.withOpacity(0.5), Colors.transparent],
+        stops: const [0.0, 0.5, 1.0]
+      ).createShader(Rect.fromLTWH(0, scanY - 20, size.width, 40));
+    
+    canvas.drawRect(Rect.fromLTWH(0, scanY - 20, size.width, 40), scanPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant TechGridPainter oldDelegate) => oldDelegate.scanValue != scanValue;
 }
