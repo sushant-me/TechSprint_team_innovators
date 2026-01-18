@@ -1,37 +1,39 @@
-name: ghost_signal
-description: "A new Flutter project."
-publish_to: "none"
+# Project metadata
+name: ghost_signal           # Name of the Flutter project
+description: "A new Flutter project."  # Brief description of the project
+publish_to: "none"           # Not publishing this package to pub.dev
 
-version: 1.0.0+1
+version: 1.0.0+1             # Versioning: version + build number
 
 environment:
-  sdk: ^3.0.0 # Changed from 3.9.2 (which doesn't exist yet) to a standard stable version
+  sdk: ^3.0.0                # Dart SDK version (stable)
 
 dependencies:
   flutter:
     sdk: flutter
 
-  # The "Senses" & UI
-  cupertino_icons: ^1.0.8
-  geolocator: ^13.0.0 # Updated to standard stable version
-  vibration: ^1.9.0 # Updated to compatible version
-  torch_light: ^1.0.2
-  url_launcher: ^6.3.0
-  google_fonts: ^6.2.1
-  percent_indicator: ^4.2.3
-  tflite_audio: ^0.3.0
-  nearby_connections: ^4.3.0
-  sensors_plus: ^7.0.0
-  permission_handler: ^12.0.1
+  # The "Senses" & UI packages
+  cupertino_icons: ^1.0.8     # iOS-style icons
+  geolocator: ^13.0.0         # Geolocation services
+  vibration: ^1.9.0           # Vibration feedback support
+  torch_light: ^1.0.2         # Control device flashlight
+  url_launcher: ^6.3.0        # Open URLs in browser or apps
+  google_fonts: ^6.2.1        # Custom Google Fonts support
+  percent_indicator: ^4.2.3   # Circular/linear progress indicators
+  tflite_audio: ^0.3.0        # TensorFlow Lite audio classification
+  nearby_connections: ^4.3.0  # Peer-to-peer device connections
+  sensors_plus: ^7.0.0        # Access accelerometer, gyroscope, etc.
+  permission_handler: ^12.0.1 # Handle runtime permissions
+
 dev_dependencies:
   flutter_test:
-    sdk: flutter
-  flutter_lints: ^5.0.0
+    sdk: flutter               # Flutter testing framework
+  flutter_lints: ^5.0.0       # Recommended linting rules
 
 flutter:
-  uses-material-design: true
+  uses-material-design: true   # Enable Material Design widgets
 
-  # FIXED ASSETS SECTION
+  # Project assets
   assets:
     - assets/soundclassifier.tflite
     - assets/labels.txt
