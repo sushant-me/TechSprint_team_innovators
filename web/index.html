@@ -1,38 +1,81 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  
+  <title>Ghost Signal | Experience the Unseen</title>
+  <meta name="description" content="Enter the Ghost Signal—a high-performance digital experience built with Flutter.">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta property="og:title" content="Ghost Signal">
+  <meta property="og:description" content="High-performance Flutter Web application.">
+  <meta property="og:image" content="icons/Icon-512.png">
 
-  <!-- iOS meta tags & icons -->
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="ghost_signal">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Ghost Signal">
   <link rel="apple-touch-icon" href="icons/Icon-192.png">
 
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
-
-  <title>ghost_signal</title>
   <link rel="manifest" href="manifest.json">
+
+  <style>
+    /* Premium Loading Animation */
+    body {
+      inset: 0; overflow: hidden; margin: 0; padding: 0; position: fixed;
+      background-color: #0d1117; /* Dark modern background */
+      display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .container {
+      text-align: center; transition: opacity 0.4s ease-out;
+    }
+    .indicator {
+      width: 50px; height: 50px; border: 3px solid rgba(255,255,255,0.1);
+      border-top: 3px solid #00d2ff; border-radius: 50%;
+      animation: spin 1s linear infinite; margin: 0 auto 20px;
+    }
+    .loading-text {
+      color: #ffffff; font-size: 14px; letter-spacing: 2px;
+      text-transform: uppercase; font-weight: 300;
+    }
+    @keyframes spin {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .main-content { opacity: 0; }
+  </style>
 </head>
 <body>
+  <div id="loading-container" class="container">
+    <div class="indicator"></div>
+    <div class="loading-text">Initializing Signal...</div>
+  </div>
+
+  <script>
+    // Modern Flutter Bootstrapping with a smooth Fade-Out
+    window.addEventListener('load', function(ev) {
+      // Download main.dart.js
+      _flutter.loader.loadEntrypoint({
+        serviceWorker: {
+          serviceWorkerVersion: serviceWorkerVersion,
+        },
+        onEntrypointLoaded: function(engineInitializer) {
+          engineInitializer.initializeEngine().then(function(appRunner) {
+            // Hide the loader before running the app
+            const loader = document.querySelector('#loading-container');
+            if (loader) {
+              loader.style.opacity = '0';
+              setTimeout(() => loader.remove(), 400);
+            }
+            appRunner.runApp();
+          });
+        }
+      });
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>
