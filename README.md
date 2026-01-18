@@ -1,4 +1,4 @@
-# ghostsignal
+# ghost_signal
 
 A new Flutter project.
 
