@@ -2,27 +2,90 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>Ghost Signal</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>ghost_signal</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string> <key>CFBundleShortVersionString</key>
+    <string>$(FLUTTER_BUILD_NAME)</string>
+    <key>CFBundleSignature</key>
+    <string>????</string>
+    <key>CFBundleVersion</key>
+    <string>$(FLUTTER_BUILD_NUMBER)</string>
+    <key>LSRequiresIPhoneOS</key>
+    <true/>
+    <key>MinimumOSVersion</key>
+    <string>13.0</string>
 
-  <key>CFBundleDevelopmentRegion</key>
-  <string>$(DEVELOPMENT_LANGUAGE)</string>
-  <key>CFBundleExecutable</key>
-  <string>$(EXECUTABLE_NAME)</string>
-  <key>CFBundleIdentifier</key>
-  <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
-  <key>CFBundleInfoDictionaryVersion</key>
-  <string>6.0</string>
-  <key>CFBundleName</key>
-  <string>$(PRODUCT_NAME)</string>
-  <key>CFBundlePackageType</key>
-  <string>FMWK</string>
-  <key>CFBundleShortVersionString</key>
-  <string>$(FLUTTER_BUILD_NAME)</string>
-  <key>CFBundleSignature</key>
-  <string>????</string>
-  <key>CFBundleVersion</key>
-  <string>$(FLUTTER_BUILD_NUMBER)</string>
-  <key>MinimumOSVersion</key>
-  <string>13.0</string>
+    <key>UILaunchStoryboardName</key>
+    <string>LaunchScreen</string>
+    <key>UIMainStoryboardFile</key>
+    <string>Main</string>
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UISupportedInterfaceOrientations~ipad</key>
+    <array>
+        <string>UIInterfaceOrientationPortrait</string>
+        <string>UIInterfaceOrientationPortraitUpsideDown</string>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
+    <key>CADisableMinimumFrameDurationOnPhone</key>
+    <true/>
+    <key>UIApplicationSupportsIndirectInputEvents</key>
+    <true/>
+
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>Ghost Signal needs your location to detect the origin of nearby signals.</string>
+    <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+    <string>Ghost Signal needs background location access to track signals even when the app is closed.</string>
+    <key>NSLocationAlwaysUsageDescription</key>
+    <string>Ghost Signal needs background location access to track signals even when the app is closed.</string>
+
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>Ghost Signal uses Bluetooth to scan for and connect to nearby sensor devices.</string>
+    <key>NSBluetoothPeripheralUsageDescription</key>
+    <string>Ghost Signal uses Bluetooth to scan for and connect to nearby sensor devices.</string>
+
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Ghost Signal uses the microphone to analyze audio frequencies in the environment.</string>
+
+    <key>NSContactsUsageDescription</key>
+    <string>Ghost Signal needs access to contacts to help you share signal reports via SMS.</string>
+
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>fetch</string> 
+        <string>processing</string>
+        <string>location</string>
+        <string>bluetooth-central</string>
+    </array>
+
+    <key>FlutterDeepLinkingEnabled</key>
+    <true/>
+
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>https</string>
+        <string>http</string>
+        <string>sms</string>
+        <string>tel</string>
+    </array>
 
 </dict>
 </plist>
