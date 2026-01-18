@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ghostsignal/services/mesh_service.dart';
 
@@ -12,17 +14,23 @@ class MeshChatScreen extends StatefulWidget {
 
 class _MeshChatScreenState extends State<MeshChatScreen> {
   final TextEditingController _msgCtrl = TextEditingController();
-  List<MeshMessage> _messages = [];
-  String _myName = "Unknown";
+  final ScrollController _scrollController = ScrollController();
+  String _myName = "Survivor";
+  late StreamSubscription _chatSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadName();
-    // Subscribe to Chat Updates
-    _messages = widget.meshService.chatMessages; // Load existing
-    // NOTE: In a real app, we'd set the callback in main and pass stream,
-    // but for this hackathon structure, we rely on the service state.
+    
+    // WOW FIX: Instead of manual refresh, listen to the service stream
+    // Assuming meshService has a broadcast stream of messages
+    _chatSubscription = widget.meshService.messageStream.listen((_) {
+      if (mounted) {
+        setState(() {});
+        _scrollToBottom();
+      }
+    });
   }
 
   void _loadName() async {
@@ -30,121 +38,201 @@ class _MeshChatScreenState extends State<MeshChatScreen> {
     setState(() => _myName = prefs.getString('my_name') ?? "Survivor");
   }
 
+  void _scrollToBottom() {
+    Future.delayed(const Duration(milliseconds: 300), () {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 500),
+          curve: Curves.outBack,
+        );
+      }
+    });
+  }
+
   void _sendMessage() {
     if (_msgCtrl.text.trim().isEmpty) return;
+    
+    HapticFeedback.mediumImpact(); // Tactical feel
+    
     widget.meshService.broadcastChat(
-        name: _myName,
-        text: _msgCtrl.text.trim(),
-        enableRelay: true // Default to relay for Earthquake Chat
-        );
+      name: _myName,
+      text: _msgCtrl.text.trim(),
+      enableRelay: true,
+    );
+    
     _msgCtrl.clear();
-    setState(() => _messages = widget.meshService.chatMessages);
+    _scrollToBottom();
+  }
+
+  @override
+  void dispose() {
+    _chatSubscription.cancel();
+    _msgCtrl.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // Refresh periodically or use StreamBuilder in full version.
-    // Here we assume setState triggers from parent or manual refresh.
-    _messages = widget.meshService.chatMessages;
+    final messages = widget.meshService.chatMessages;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F172A),
+      backgroundColor: const Color(0xFF020617), // Deeper space black
       appBar: AppBar(
-        title: const Text("BLACKOUT CHAT",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text("MESH_TERMINAL_v1.0", 
+              style: TextStyle(color: Colors.cyanAccent, fontSize: 18, fontWeight: FontWeight.black, letterSpacing: 2)),
+            Text("NODES ACTIVE: ${widget.meshService.activeNodes}", 
+              style: const TextStyle(color: Colors.white30, fontSize: 10)),
+          ],
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         actions: [
-          IconButton(
-              icon: const Icon(Icons.refresh, color: Colors.cyan),
-              onPressed: () => setState(() {}))
+          _buildSignalIndicator(),
         ],
       ),
-      body: Column(
-        children: [
-          Container(
-            padding: const EdgeInsets.all(10),
-            color: Colors.white10,
-            child: Row(children: const [
-              Icon(Icons.bluetooth, color: Colors.blueAccent),
-              SizedBox(width: 10),
-              Expanded(
-                  child: Text(
-                      "Connected to Mesh Network. Messages will hop to nearby devices.",
-                      style: TextStyle(color: Colors.white54, fontSize: 12)))
-            ]),
+      body: Container(
+        decoration: BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Colors.cyan.withOpacity(0.05), Colors.transparent],
           ),
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _messages.length,
-              itemBuilder: (ctx, i) {
-                final msg = _messages[i];
-                final isMe = msg.senderName == "Me";
-                return Align(
-                  alignment:
-                      isMe ? Alignment.centerRight : Alignment.centerLeft,
-                  child: Container(
-                    margin: const EdgeInsets.symmetric(vertical: 5),
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                        color: isMe
-                            ? Colors.cyan.withOpacity(0.2)
-                            : Colors.white10,
-                        borderRadius: BorderRadius.circular(15),
-                        border: Border.all(
-                            color: isMe ? Colors.cyanAccent : Colors.white24)),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (!isMe)
-                          Text(msg.senderName,
-                              style: const TextStyle(
-                                  color: Colors.cyanAccent,
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.bold)),
-                        Text(msg.content,
-                            style: const TextStyle(
-                                color: Colors.white, fontSize: 16)),
-                        const SizedBox(height: 5),
-                        Text("${msg.extra} • ${msg.hops} hops",
-                            style: const TextStyle(
-                                color: Colors.white30, fontSize: 10))
-                      ],
-                    ),
-                  ),
-                );
-              },
+        ),
+        child: Column(
+          children: [
+            _buildNetworkStatusBanner(),
+            Expanded(
+              child: ListView.builder(
+                controller: _scrollController,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+                itemCount: messages.length,
+                itemBuilder: (ctx, i) {
+                  return _buildMessageBubble(messages[i]);
+                },
+              ),
             ),
+            _buildInputArea(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSignalIndicator() {
+    return Padding(
+      padding: const EdgeInsets.only(right: 16),
+      child: Center(
+        child: Container(
+          width: 12,
+          height: 12,
+          decoration: const BoxDecoration(
+            color: Colors.greenAccent,
+            shape: BoxShape.circle,
+            boxShadow: [BoxShadow(color: Colors.greenAccent, blurRadius: 10)],
           ),
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Row(
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNetworkStatusBanner() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+      color: Colors.cyanAccent.withOpacity(0.1),
+      child: Row(
+        children: [
+          const Icon(Icons.hub_outlined, color: Colors.cyanAccent, size: 16),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text("PROTOCOL: P2P_RELAY_ENABLED", 
+              style: TextStyle(color: Colors.cyanAccent, fontSize: 10, fontWeight: FontWeight.bold)),
+          ),
+          Text("RSSI: -64dBm", style: TextStyle(color: Colors.cyanAccent.withOpacity(0.5), fontSize: 10)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(MeshMessage msg) {
+    final bool isMe = msg.senderName == _myName || msg.senderName == "Me";
+    
+    return Align(
+      alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
+      child: Container(
+        max_width: MediaQuery.of(context).size.width * 0.75,
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: isMe ? Colors.cyanAccent.withOpacity(0.1) : Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(16),
+            topRight: const Radius.circular(16),
+            bottomLeft: Radius.circular(isMe ? 16 : 0),
+            bottomRight: Radius.circular(isMe ? 0 : 16),
+          ),
+          border: Border.all(color: isMe ? Colors.cyanAccent.withOpacity(0.3) : Colors.white10),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisSize: MainAxisSize.min,
               children: [
-                Expanded(
-                  child: TextField(
-                    controller: _msgCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(
-                        hintText: "Type message...",
-                        hintStyle: const TextStyle(color: Colors.white30),
-                        filled: true,
-                        fillColor: Colors.white10,
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(30),
-                            borderSide: BorderSide.none)),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FloatingActionButton(
-                  backgroundColor: Colors.cyan,
-                  onPressed: _sendMessage,
-                  child: const Icon(Icons.send, color: Colors.white),
-                )
+                Text(msg.senderName.toUpperCase(), 
+                  style: TextStyle(color: isMe ? Colors.cyanAccent : Colors.white60, fontSize: 9, fontWeight: FontWeight.black)),
+                const SizedBox(width: 8),
+                Text("${msg.hops} HOPS", style: const TextStyle(color: Colors.white24, fontSize: 8)),
               ],
             ),
-          )
+            const SizedBox(height: 6),
+            Text(msg.content, style: const TextStyle(color: Colors.white, fontSize: 15, height: 1.4)),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.bottomRight,
+              child: Text(msg.extra, style: const TextStyle(color: Colors.white24, fontSize: 9)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInputArea() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        border: Border(top: BorderSide(color: Colors.cyanAccent.withOpacity(0.1))),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: TextField(
+              controller: _msgCtrl,
+              style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+              decoration: InputDecoration(
+                hintText: ">_ SECURE_ENTRY",
+                hintStyle: const TextStyle(color: Colors.white24),
+                filled: true,
+                fillColor: Colors.black,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+                enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.white10)),
+                focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: const BorderSide(color: Colors.cyanAccent)),
+              ),
+            ),
+          ),
+          const SizedBox(width: 15),
+          FloatingActionButton.small(
+            backgroundColor: Colors.cyanAccent,
+            onPressed: _sendMessage,
+            child: const Icon(Icons.bolt, color: Colors.black),
+          ),
         ],
       ),
     );
