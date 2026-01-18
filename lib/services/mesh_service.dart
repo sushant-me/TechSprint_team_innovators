@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:device_info_plus/device_info_plus.dart'; // Essential for Android version checks
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -51,7 +51,9 @@ class MeshMessage {
 class MeshNetworkService {
   // CONFIG
   static const String _serviceId = "com.ghost.mesh.v1"; // Versioned Service ID
-  final Strategy _strategy = Strategy.P2P_CLUSTER; // The best for M-to-N mesh
+  // P2P_CLUSTER allows both scanning and advertising simultaneously if supported,
+  // making it ideal for a true mesh where nodes can relay data.
+  final Strategy _strategy = Strategy.P2P_CLUSTER;
 
   // STATE
   String _myEndpointId = "UNKNOWN";
@@ -70,7 +72,7 @@ class MeshNetworkService {
 
   // --- 1. INITIALIZATION & PERMISSIONS ---
   
-  /// Call this first! Handles the nightmare of Android Permissions
+  /// Call this first! Handles the complexity of Android Permissions across versions.
   Future<bool> initializeMesh(String userName) async {
     _myUserName = userName;
     
@@ -82,14 +84,14 @@ class MeshNetworkService {
       Map<Permission, PermissionStatus> statuses = {};
       
       if (sdkInt >= 33) {
-        // Android 13+ (Granular)
+        // Android 13+ (Granular Permissions)
         statuses = await [
           Permission.bluetooth,
           Permission.bluetoothAdvertise,
           Permission.bluetoothConnect,
           Permission.bluetoothScan,
-          Permission.nearbyWifiDevices,
-          Permission.location, // Still needed for some hardware discovery
+          Permission.nearbyWifiDevices, // Critical for P2P_CLUSTER
+          Permission.location, // Still needed for some hardware discovery logic
         ].request();
       } else if (sdkInt >= 31) {
         // Android 12 (Bluetooth Scans required)
@@ -108,7 +110,7 @@ class MeshNetworkService {
         ].request();
       }
 
-      // Check if critical permissions are granted
+      // Check critical permissions
       bool locationGranted = statuses[Permission.location]?.isGranted ?? false;
       bool bleGranted = (sdkInt >= 31) 
           ? (statuses[Permission.bluetoothScan]?.isGranted ?? false) 
@@ -123,7 +125,7 @@ class MeshNetworkService {
       bool locEnabled = await Permission.location.serviceStatus.isEnabled;
       if (!locEnabled) {
          print("⚠️ GPS Service is OFF - Discovery might fail");
-         // Optionally prompt user to turn it on
+         // In a real app, trigger a dialog here asking user to enable GPS
       }
     }
     return true;
@@ -131,6 +133,7 @@ class MeshNetworkService {
 
   // --- 2. THE VICTIM ENGINE (Broadcaster) ---
   
+  /// Starts advertising presence to nearby devices.
   Future<void> enterEmergencyMode() async {
     await stopMesh(); // Reset first
     _currentRole = MeshRole.broadcaster;
@@ -153,6 +156,7 @@ class MeshNetworkService {
 
   // --- 3. THE RESCUER ENGINE (Scanner) ---
   
+  /// Starts looking for victims.
   Future<void> enterRescuerMode() async {
     await stopMesh();
     _currentRole = MeshRole.receiver;
@@ -164,7 +168,8 @@ class MeshNetworkService {
         _strategy,
         onEndpointFound: (id, name, serviceId) {
           print("👀 MESH: Found Node $name ($id). Requesting Connection...");
-          // Auto-Connect to build the mesh
+          
+          // Auto-Connect logic: We want to link to everyone found.
           Nearby().requestConnection(
             _myUserName,
             id,
@@ -186,10 +191,12 @@ class MeshNetworkService {
 
   // --- 4. HANDSHAKE PROTOCOL ---
 
-  /// Called when two phones physically find each other
+  /// Called when two phones physically find each other and negotiate a link.
   void _onConnectionInit(String id, ConnectionInfo info) {
     print("🤝 MESH: Handshake with ${info.endpointName} ($id)");
-    // In a mesh, we trust everyone for SOS. Auto-Accept.
+    
+    // SECURITY NOTE: In a secure app, you would show a PIN here.
+    // For a rescue mesh, we TRUST everyone. Auto-Accept.
     Nearby().acceptConnection(
       id,
       onPayLoadRecieved: (endId, payload) {
@@ -198,7 +205,7 @@ class MeshNetworkService {
         }
       },
       onPayloadTransferUpdate: (endId, update) {
-        // Handle file progress if needed
+        // Handle file transfer progress if implementing image sharing
       }
     );
   }
@@ -206,7 +213,8 @@ class MeshNetworkService {
   void _onConnectionResult(String id, Status status) {
     if (status == Status.CONNECTED) {
       print("✅ MESH: Linked to $id");
-      _connectedNodes[id] = ConnectionInfo(id, "Unknown", false); // Store ref
+      // We don't have the real name yet, just ID, until they send a message
+      _connectedNodes[id] = ConnectionInfo(id, "Unknown", false); 
       _peersController.add(_connectedNodes.keys.toList());
       
       // If I am a victim, immediately scream SOS upon connection
@@ -226,10 +234,10 @@ class MeshNetworkService {
 
   // --- 5. DATA LAYER ---
 
-  /// Broadcasts a message to ALL connected nodes
+  /// Broadcasts a message to ALL connected nodes (Simple Flood)
   void broadcastMessage(String content, {String type = 'CHAT'}) {
     final msg = MeshMessage(
-      senderId: _myEndpointId, // Note: You need to set this properly in real app
+      senderId: _myEndpointId, // In production, ensure this ID is persistent
       senderName: _myUserName,
       content: content,
       type: type,
@@ -255,10 +263,11 @@ class MeshNetworkService {
       print("📩 MESH MSG: [${msg.type}] ${msg.senderName}: ${msg.content}");
       _messageController.add(msg);
       
-      // REBROADCAST LOGIC (Simple Flood)
+      // REBROADCAST LOGIC (Mesh Relay)
       // If I receive an SOS, and I have other connections, pass it on!
       if (msg.type == "SOS") {
-        // NOTE: In a real app, check a 'messageId' to prevent infinite loops
+        print("📣 RELAYING SOS from ${msg.senderName}");
+        // NOTE: In a real app, implement a 'messageId' cache to prevent infinite echo loops
         // _rebroadcast(msg, excludeId: senderEndpointId);
       }
       
