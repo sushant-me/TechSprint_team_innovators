@@ -1,1 +1,7 @@
 #include "Generated.xcconfig"
+
+// Explicitly set the build mode
+FLUTTER_BUILD_MODE=debug
+
+// Optimization: Faster compilation for debug (No optimizations)
+SWIFT_OPTIMIZATION_LEVEL = -Onone
