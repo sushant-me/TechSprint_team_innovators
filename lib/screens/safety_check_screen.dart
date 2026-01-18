@@ -7,6 +7,7 @@ import 'package:geolocator/geolocator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:avatar_glow/avatar_glow.dart';
 
+// Services
 import 'package:ghostsignal/services/earthquake_api_service.dart';
 import 'package:ghostsignal/services/mesh_service.dart';
 import 'package:ghostsignal/services/siren_service.dart';
@@ -16,304 +17,346 @@ import 'package:ghostsignal/services/flashlight_service.dart';
 class SafetyCheckScreen extends StatefulWidget {
   final String triggerCause;
   const SafetyCheckScreen({super.key, required this.triggerCause});
+
   @override
   State<SafetyCheckScreen> createState() => _SafetyCheckScreenState();
 }
 
-class _SafetyCheckScreenState extends State<SafetyCheckScreen> {
-  // 0 = Incoming Call (Swipe UI)
-  // 1 = Active Call (Keypad UI)
-  // 2 = SOS Triggered (Red Screen)
-  int _callState = 0;
-
+class _SafetyCheckScreenState extends State<SafetyCheckScreen> with TickerProviderStateMixin {
+  // 0 = Incoming Check (Slide to Answer)
+  // 1 = Triage (Safe vs Help)
+  // 2 = SOS Active (Beacon Mode)
+  int _state = 0;
+  
+  // Resources
   final FlutterTts _tts = FlutterTts();
   final AudioPlayer _ringtone = AudioPlayer();
-  Timer? _timeoutTimer;
+  Timer? _failsafeTimer;
+  int _countdown = 15; // Seconds before auto-SOS
 
+  // Services
   final MeshService _mesh = MeshService();
   final SmsService _sms = SmsService();
   final SirenService _siren = SirenService();
   final FlashlightService _flash = FlashlightService();
 
+  // Animation
+  late AnimationController _strobeController;
+
   @override
   void initState() {
     super.initState();
-    _startIncomingCall();
-  }
-
-  void _startIncomingCall() async {
-    // 1. API Check
-    bool confirmed = false;
-    if (widget.triggerCause == "Earthquake") {
-      confirmed = await EarthquakeApiService().verifyEarthquakeNearby();
-    }
-
-    // 2. Ringtone & Vibrate
-    await _ringtone.setSource(AssetSource('siren.mp3'));
-    await _ringtone.setVolume(1.0); // Loud
-    await _ringtone.setReleaseMode(ReleaseMode.loop);
-    await _ringtone.resume();
-    Vibration.vibrate(pattern: [1000, 1000], repeat: 1);
-
-    // 3. Announcement
-    await Future.delayed(const Duration(seconds: 2));
-    String text = "Safety Check.";
-    if (confirmed) text += " Earthquake confirmed.";
-    text += " Swipe green to answer.";
-
-    await _tts.setLanguage("en-US");
-    await _tts.setVolume(1.0);
-    await _tts.speak(text);
-
-    // 4. Timeout (15s)
-    _timeoutTimer = Timer(const Duration(seconds: 15), () {
-      if (mounted && _callState == 0)
-        _triggerGlobalSOS("Unconscious / No Answer");
-    });
-  }
-
-  void _answerCall() async {
-    // STOP Ringing
-    _timeoutTimer?.cancel();
-    await _ringtone.stop();
-    Vibration.cancel();
-
-    setState(() => _callState = 1);
-
-    // SPEAK INSTRUCTIONS
-    await _tts.setVolume(1.0);
-    await _tts.setSpeechRate(0.5); // Clear
-    await _tts.speak("If you are fine, press 1. If you need help, press 2.");
-
-    // Timeout (10s)
-    _timeoutTimer = Timer(const Duration(seconds: 10), () {
-      if (mounted) _triggerGlobalSOS("Silent Call");
-    });
-  }
-
-  void _declineCall() {
-    _shutdown("SAFE");
-  }
-
-  void _handleKeypad(String key) {
-    if (key == "1") _shutdown("SAFE");
-    if (key == "2") _triggerGlobalSOS("User Requested Help");
-  }
-
-  void _shutdown(String status) async {
-    // KILL ALL NOISE AND LIGHT
-    _timeoutTimer?.cancel();
-    await _ringtone.stop();
-    await _tts.stop();
-    Vibration.cancel();
-    await _siren.stopSiren();
-    _flash.stopStrobe();
-
-    if (status == "SAFE") {
-      await _mesh.broadcastSafe();
-      Navigator.popUntil(context, (route) => route.isFirst);
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          backgroundColor: Colors.green,
-          content: Text("Verified Safe. All Alarms Stopped.")));
-    }
-  }
-
-  Future<void> _triggerGlobalSOS(String reason) async {
-    _timeoutTimer?.cancel();
-    _ringtone.stop();
-    _tts.stop();
-
-    // START EMERGENCY SYSTEMS
-    _siren.startSiren();
-    _flash.startSosStrobe();
-
-    String lat = "0.0", long = "0.0";
-    try {
-      Position pos = await Geolocator.getCurrentPosition(
-          desiredAccuracy: LocationAccuracy.high);
-      lat = pos.latitude.toString();
-      long = pos.longitude.toString();
-    } catch (e) {
-      print(e);
-    }
-
-    final prefs = await SharedPreferences.getInstance();
-    String name = prefs.getString('my_name') ?? "Unknown";
-    String cond = prefs.getString('my_condition') ?? "None";
-    List<String> contacts = prefs.getStringList('sos_contacts') ?? [];
-
-    if (contacts.isNotEmpty) _sms.sendBackgroundSms(contacts, lat, long);
-    await _mesh.startEmergencyBroadcast(lat, long, name, "$cond | $reason");
-
-    if (mounted) setState(() => _callState = 2);
+    _strobeController = AnimationController(vsync: this, duration: const Duration(milliseconds: 500));
+    _initSafetyProtocol();
   }
 
   @override
   void dispose() {
-    _shutdown("EXIT");
+    _shutdownSystem(isExit: true);
+    _strobeController.dispose();
     super.dispose();
+  }
+
+  void _initSafetyProtocol() async {
+    // 1. Validate Trigger (Optional API check)
+    if (widget.triggerCause == "Earthquake") {
+      await EarthquakeApiService().verifyEarthquakeNearby();
+    }
+
+    // 2. Start Audio/Haptic Loop
+    _ringtone.setSource(AssetSource('siren_alert.mp3'));
+    _ringtone.setReleaseMode(ReleaseMode.loop);
+    _ringtone.resume();
+    
+    Vibration.vibrate(pattern: [500, 1000, 500, 1000], repeat: 0); // Heartbeat pattern
+
+    // 3. Voice Command
+    await _tts.setLanguage("en-US");
+    await _tts.setSpeechRate(0.5);
+    _tts.speak("Safety Check Active. Are you safe?");
+
+    // 4. Start Deadman Switch (Countdown)
+    _startCountdown();
+  }
+
+  void _startCountdown() {
+    _failsafeTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+      setState(() {
+        if (_countdown > 0) {
+          _countdown--;
+        } else {
+          _triggerSOS("Unresponsive / Time Out");
+        }
+      });
+    });
+  }
+
+  // --- ACTIONS ---
+
+  void _userResponded() {
+    _failsafeTimer?.cancel();
+    _ringtone.stop();
+    Vibration.cancel();
+    _tts.stop();
+    setState(() {
+      _state = 1; // Move to Decision Phase
+      _countdown = 10; // Give them 10s to decide, else assume panic
+    });
+    // Restart timer for decision phase
+    _startCountdown();
+  }
+
+  void _markSafe() async {
+    _shutdownSystem(status: "SAFE");
+  }
+
+  void _triggerSOS(String reason) async {
+    _failsafeTimer?.cancel();
+    
+    // Switch to Beacon Mode
+    setState(() => _state = 2);
+    _strobeController.repeat(reverse: true);
+    
+    // Hardware Activation
+    _siren.startSiren();
+    _flash.startSosStrobe();
+
+    // Network Broadcast
+    Position pos = await Geolocator.getCurrentPosition(desiredAccuracy: LocationAccuracy.high);
+    final prefs = await SharedPreferences.getInstance();
+    
+    String payload = "CRITICAL | ${prefs.getString('my_name')} | $reason";
+    
+    _mesh.startEmergencyBroadcast(
+      pos.latitude.toString(), 
+      pos.longitude.toString(), 
+      "SOS", 
+      payload
+    );
+
+    List<String> contacts = prefs.getStringList('sos_contacts') ?? [];
+    if (contacts.isNotEmpty) {
+      _sms.sendBackgroundSms(contacts, pos.latitude.toString(), pos.longitude.toString());
+    }
+  }
+
+  void _shutdownSystem({String status = "EXIT", bool isExit = false}) async {
+    _failsafeTimer?.cancel();
+    await _ringtone.stop();
+    await _tts.stop();
+    Vibration.cancel();
+    _siren.stopSiren();
+    _flash.stopStrobe();
+
+    if (status == "SAFE" && mounted) {
+      _mesh.broadcastSafe();
+      Navigator.popUntil(context, (route) => route.isFirst);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Marked Safe. Systems Standby."), backgroundColor: Colors.green)
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // SOS UI
-    if (_callState == 2) {
-      return Scaffold(
-        backgroundColor: const Color(0xFFEF4444),
-        body: Center(
-            child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: const [
-              Icon(Icons.warning_amber, size: 100, color: Colors.white),
-              SizedBox(height: 20),
-              Text("SOS SENT",
-                  style: TextStyle(
-                      fontSize: 40,
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold)),
-              Text("Emergency Contacts Notified",
-                  style: TextStyle(color: Colors.white70))
-            ])),
-      );
-    }
-
-    // MAIN CALL UI
-    return Scaffold(
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-            gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [Color(0xFF1E293B), Color(0xFF0F172A)])),
-        child: Column(
+    return WillPopScope(
+      onWillPop: () async => false, // Disable back button during check
+      child: Scaffold(
+        backgroundColor: const Color(0xFF0F172A),
+        body: Stack(
           children: [
-            const SizedBox(height: 100),
+            // Background Alarm Effect (Only in State 2)
+            if (_state == 2)
+              AnimatedBuilder(
+                animation: _strobeController,
+                builder: (context, child) {
+                  return Container(
+                    color: Colors.red.withOpacity(_strobeController.value * 0.5),
+                  );
+                },
+              ),
 
-            // PULSING CALLER ID
-            AvatarGlow(
-              glowColor:
-                  _callState == 0 ? Colors.cyanAccent : Colors.greenAccent,
-              endRadius: 100.0,
-              duration: const Duration(milliseconds: 2000),
-              repeat: true,
-              child: Container(
-                padding: const EdgeInsets.all(25),
-                decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                    border: Border.all(color: Colors.white24)),
-                child:
-                    const Icon(Icons.security, size: 60, color: Colors.white),
+            SafeArea(
+              child: Column(
+                children: [
+                  const SizedBox(height: 40),
+                  
+                  // HEADER: TIMER
+                  if (_state < 2)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.white10,
+                        borderRadius: BorderRadius.circular(20)
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.timer, color: Colors.white70),
+                          const SizedBox(width: 10),
+                          Text(
+                            "AUTO-SOS IN $_countdown s",
+                            style: const TextStyle(
+                              color: Colors.redAccent, 
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                  const Spacer(),
+
+                  // --- UI STATES ---
+                  
+                  // STATE 0: SLIDE TO ANSWER
+                  if (_state == 0) _buildIncomingCallUI(),
+
+                  // STATE 1: DECISION (SAFE vs HELP)
+                  if (_state == 1) _buildTriageUI(),
+
+                  // STATE 2: SOS BEACON
+                  if (_state == 2) _buildBeaconUI(),
+
+                  const Spacer(),
+                ],
               ),
             ),
-            const SizedBox(height: 20),
-            const Text("Ghost Signal",
-                style: TextStyle(
-                    fontSize: 28,
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    letterSpacing: 1)),
-            const SizedBox(height: 10),
-            Text(
-                _callState == 0
-                    ? "Safety Check Incoming..."
-                    : "Voice Verification Active",
-                style: const TextStyle(color: Colors.white54)),
-
-            const Spacer(),
-
-            // STATE 0: SLIDE TO ANSWER
-            if (_callState == 0) ...[
-              Padding(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 40, vertical: 60),
-                child: Dismissible(
-                  key: UniqueKey(),
-                  direction: DismissDirection.horizontal,
-                  onDismissed: (dir) {
-                    if (dir == DismissDirection.startToEnd)
-                      _answerCall();
-                    else
-                      _declineCall();
-                  },
-                  background:
-                      _swipeBg(Alignment.centerLeft, Colors.green, Icons.call),
-                  secondaryBackground: _swipeBg(
-                      Alignment.centerRight, Colors.red, Icons.call_end),
-                  child: Container(
-                    height: 70,
-                    decoration: BoxDecoration(
-                        color: Colors.white.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(35),
-                        border: Border.all(color: Colors.white12)),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: const [
-                        Icon(Icons.chevron_left, color: Colors.white54),
-                        Text("  Slide to Answer  ",
-                            style:
-                                TextStyle(color: Colors.white, fontSize: 16)),
-                        Icon(Icons.chevron_right, color: Colors.white54),
-                      ],
-                    ),
-                  ),
-                ),
-              )
-            ],
-
-            // STATE 1: KEYPAD
-            if (_callState == 1) ...[
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 40),
-                child: Column(
-                  children: [
-                    _optionBtn("1", "I AM FINE", Colors.green,
-                        () => _handleKeypad("1")),
-                    const SizedBox(height: 20),
-                    _optionBtn("2", "I NEED HELP", Colors.red,
-                        () => _handleKeypad("2")),
-                    const SizedBox(height: 40),
-                    FloatingActionButton(
-                        backgroundColor: Colors.red,
-                        onPressed: _declineCall,
-                        child: const Icon(Icons.call_end))
-                  ],
-                ),
-              ),
-              const SizedBox(height: 60),
-            ]
           ],
         ),
       ),
     );
   }
 
-  Widget _swipeBg(Alignment align, Color color, IconData icon) {
-    return Container(
-      alignment: align,
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      decoration:
-          BoxDecoration(color: color, borderRadius: BorderRadius.circular(35)),
-      child: Icon(icon, color: Colors.white),
+  Widget _buildIncomingCallUI() {
+    return Column(
+      children: [
+        AvatarGlow(
+          glowColor: Colors.cyanAccent,
+          endRadius: 120.0,
+          child: Container(
+            padding: const EdgeInsets.all(30),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: Colors.cyan.withOpacity(0.2),
+              border: Border.all(color: Colors.cyanAccent, width: 2)
+            ),
+            child: const Icon(Icons.health_and_safety, size: 60, color: Colors.white),
+          ),
+        ),
+        const SizedBox(height: 30),
+        Text(
+          widget.triggerCause.toUpperCase(),
+          style: const TextStyle(color: Colors.redAccent, fontSize: 20, letterSpacing: 5, fontWeight: FontWeight.bold),
+        ),
+        const Text(
+          "SAFETY CHECK DETECTED",
+          style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 60),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 30),
+          child: Dismissible(
+            key: UniqueKey(),
+            direction: DismissDirection.horizontal,
+            confirmDismiss: (direction) async {
+              _userResponded();
+              return false; // Don't dismiss the widget, just change state
+            },
+            background: Container(
+              decoration: BoxDecoration(color: Colors.green, borderRadius: BorderRadius.circular(50)),
+              alignment: Alignment.centerLeft,
+              padding: const EdgeInsets.only(left: 30),
+              child: const Icon(Icons.check, color: Colors.white),
+            ),
+            child: Container(
+              height: 70,
+              decoration: BoxDecoration(
+                color: Colors.white24,
+                borderRadius: BorderRadius.circular(50),
+                border: Border.all(color: Colors.white30)
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: const [
+                  Icon(Icons.chevron_left, color: Colors.white54),
+                  Text("  SLIDE TO RESPOND  ", style: TextStyle(color: Colors.white, fontSize: 16, letterSpacing: 1)),
+                  Icon(Icons.chevron_right, color: Colors.white54),
+                ],
+              ),
+            ),
+          ),
+        )
+      ],
     );
   }
 
-  Widget _optionBtn(String key, String label, Color color, VoidCallback tap) {
-    return GestureDetector(
-      onTap: tap,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(vertical: 25),
-        decoration: BoxDecoration(
-            color: color.withOpacity(0.2),
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: color, width: 2)),
-        child: Center(
-          child: Text("Press $key : $label",
-              style: TextStyle(
-                  color: color, fontSize: 20, fontWeight: FontWeight.bold)),
-        ),
+  Widget _buildTriageUI() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Column(
+        children: [
+          const Text("WHAT IS YOUR STATUS?", style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 40),
+          
+          // I AM SAFE
+          SizedBox(
+            width: double.infinity,
+            height: 100,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.green[800],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))
+              ),
+              icon: const Icon(Icons.check_circle, size: 40),
+              label: const Text("I AM SAFE\n(Cancel Alarm)", textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
+              onPressed: _markSafe,
+            ),
+          ),
+          
+          const SizedBox(height: 20),
+          
+          // I NEED HELP
+          SizedBox(
+            width: double.infinity,
+            height: 100,
+            child: ElevatedButton.icon(
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red[800],
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20))
+              ),
+              icon: const Icon(Icons.sos, size: 40),
+              label: const Text("I NEED HELP\n(Broadcast SOS)", textAlign: TextAlign.center, style: TextStyle(fontSize: 18)),
+              onPressed: () => _triggerSOS("Manual Request"),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBeaconUI() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.warning, size: 100, color: Colors.white),
+          const SizedBox(height: 20),
+          const Text("SOS BEACON ACTIVE", style: TextStyle(color: Colors.white, fontSize: 30, fontWeight: FontWeight.bold)),
+          const SizedBox(height: 10),
+          const Text("Broadcasting Location via Mesh & SMS...", style: TextStyle(color: Colors.white70)),
+          const SizedBox(height: 50),
+          OutlinedButton(
+            style: OutlinedButton.styleFrom(
+              side: const BorderSide(color: Colors.white),
+              padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 15)
+            ),
+            onPressed: () => _shutdownSystem(status: "SAFE"),
+            child: const Text("FALSE ALARM - CANCEL", style: TextStyle(color: Colors.white)),
+          )
+        ],
       ),
     );
   }
