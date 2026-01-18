@@ -4,7 +4,6 @@ plugins {
     // Use the latest declarative syntax for the Flutter Gradle Plugin
     id("dev.flutter.flutter-gradle-plugin")
 }
-
 android {
     namespace = "com.example.ghost_signal"
     compileSdk = flutter.compileSdkVersion
