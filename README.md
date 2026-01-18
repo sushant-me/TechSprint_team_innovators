@@ -72,6 +72,7 @@ torch_light – Flashlight control
 audioplayers – Play siren audio
 
 ## Project structure
+```
 lib/
 ├─ screens/
 │  ├─ home_screen.dart
@@ -83,6 +84,8 @@ lib/
 │  ├─ bluetooth_service.dart
 │  └─ accident_detection_service.dart
 └─ main.dart
+```
+
 # How It Works
 
 - User opens the app and sets up name and emergency contacts in Profile.
