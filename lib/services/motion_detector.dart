@@ -3,70 +3,150 @@ import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 
-class MotionDetector {
-  // CONFIGURATION
-  // Drop Threshold: Near 0 means weightlessness (Free Fall)
-  static const double freeFallThreshold = 3.0;
-  // Impact Threshold: The sudden stop (The Crash)
-  static const double impactThreshold = 20.0;
+// --- DATA MODEL ---
+class FallEvent {
+  final double impactForce;
+  final DateTime time;
+  final String confidence; // "High", "Medium"
 
+  FallEvent(this.impactForce, this.time, this.confidence);
+}
+
+class GravityGuard {
+  // --- CONFIGURATION (Physics Constants) ---
+  static const double _gravity = 9.81;
+  
+  // 1. Free Fall: Near 0g (User is falling)
+  static const double _threshFreeFall = 2.0; 
+  
+  // 2. Impact: Sudden stop (Phone hits ground)
+  static const double _threshImpact = 18.0; 
+  
+  // 3. Immobility: User isn't moving after fall
+  static const double _threshMotionless = 1.5; 
+  static const int _immobilityDurationSec = 3;
+
+  // --- STATE ---
   StreamSubscription? _accelSubscription;
-  bool _isMonitoring = false;
-  bool _possibleFallDetected = false;
-  Timer? _impactWindowTimer;
+  final StreamController<double> _telemetryController = StreamController.broadcast();
+  final StreamController<FallEvent> _fallController = StreamController.broadcast();
 
-  // The function to call when Fall is CONFIRMED
-  final VoidCallback onFallDetected;
+  // Public Streams (Connect your UI here!)
+  Stream<double> get liveGForce => _telemetryController.stream;
+  Stream<FallEvent> get onFallConfirmed => _fallController.stream;
 
-  MotionDetector({required this.onFallDetected});
+  // Logic Flags
+  bool _isArmed = false;
+  bool _possibleFreeFall = false;
+  DateTime? _freeFallTime;
+  Timer? _immobilityTimer;
 
-  void startMonitoring() {
-    if (_isMonitoring) return;
+  /// Starts the Physics Engine
+  void armSystem() {
+    if (_isArmed) return;
+    _isArmed = true;
 
-    // Listen to the Raw Accelerometer (Includes Gravity)
-    _accelSubscription = accelerometerEvents.listen((AccelerometerEvent event) {
-      // Calculate total G-Force magnitude
-      // Formula: √(x² + y² + z²)
-      double gForce = sqrt(pow(event.x, 2) + pow(event.y, 2) + pow(event.z, 2));
-
-      _analyzePhysics(gForce);
+    // We use UserAccelerometer to ignore constant gravity, 
+    // OR standard Accelerometer to detect Free Fall (where G goes to 0).
+    // Standard Accelerometer is BEST for Free Fall detection.
+    _accelSubscription = accelerometerEvents.listen((event) {
+      _processPhysicsFrame(event);
     });
-
-    _isMonitoring = true;
-    print("GHOST SIGNAL GRAVITY: Monitoring for falls...");
+    
+    debugPrint("🛡️ GRAVITY GUARD: ARMING SYSTEM...");
   }
 
-  void _analyzePhysics(double gForce) {
-    // STAGE 1: DETECT FREE FALL (The Drop)
-    if (gForce < freeFallThreshold && !_possibleFallDetected) {
-      print("GRAVITY: Free fall detected! ($gForce m/s²)");
-      _possibleFallDetected = true;
+  void _processPhysicsFrame(AccelerometerEvent event) {
+    // 1. Calculate Magnitude (Total G-Force)
+    // Formula: √(x² + y² + z²)
+    double rawG = sqrt(pow(event.x, 2) + pow(event.y, 2) + pow(event.z, 2));
 
-      // We give the phone 1 second to hit the ground
-      _impactWindowTimer?.cancel();
-      _impactWindowTimer = Timer(const Duration(seconds: 1), () {
-        // If 1 second passes and no impact, reset (False Alarm)
-        _possibleFallDetected = false;
-        print("GRAVITY: Reset (No impact detected).");
+    // 2. Telemetry Stream (For UI "Seismograph")
+    // We limit updates to prevent UI lag
+    _telemetryController.add(rawG);
+
+    // --- PHASE 1: FREE FALL DETECTION ---
+    if (rawG < _threshFreeFall) {
+      if (!_possibleFreeFall) {
+        _possibleFreeFall = true;
+        _freeFallTime = DateTime.now();
+        debugPrint("📉 PHYSICS: Weightlessness Detected (Free Fall)");
+      }
+    }
+
+    // --- PHASE 2: IMPACT DETECTION ---
+    if (_possibleFreeFall) {
+      // Check if this impact happened within 1 second of free fall
+      if (DateTime.now().difference(_freeFallTime!).inMilliseconds > 1000) {
+        _possibleFreeFall = false; // Too long, probably just handling the phone
+        return;
+      }
+
+      if (rawG > _threshImpact) {
+        debugPrint("💥 PHYSICS: High Impact Detected ($rawG m/s²)");
+        _initiateImmobilityCheck(rawG);
+        _possibleFreeFall = false; // Reset for next time
+      }
+    }
+  }
+
+  // --- PHASE 3: IMMOBILITY CHECK (The "Wow" Factor) ---
+  // If the user picks up the phone immediately, it was likely a drop, not a fall.
+  // If the sensor stays flat/quiet, the user might be unconscious.
+  void _initiateImmobilityCheck(double impactForce) {
+    debugPrint("⏳ PHYSICS: Verifying Immobility...");
+    
+    // Cancel any existing check
+    _immobilityTimer?.cancel();
+    
+    // Pause briefly to let the physics settle (bouncing phone)
+    Future.delayed(const Duration(seconds: 1), () {
+      
+      // Monitor for 3 seconds
+      List<double> postCrashValues = [];
+      StreamSubscription? motionMonitor;
+      
+      motionMonitor = accelerometerEvents.listen((e) {
+         double g = sqrt(pow(e.x, 2) + pow(e.y, 2) + pow(e.z, 2));
+         postCrashValues.add(g);
       });
-    }
 
-    // STAGE 2: DETECT IMPACT (The Crash)
-    if (_possibleFallDetected && gForce > impactThreshold) {
-      print("GRAVITY: IMPACT CONFIRMED! ($gForce m/s²)");
+      _immobilityTimer = Timer(Duration(seconds: _immobilityDurationSec), () {
+        motionMonitor?.cancel();
+        _analyzePostCrashMotion(postCrashValues, impactForce);
+      });
+    });
+  }
 
-      // STOP everything and trigger alarm
-      _possibleFallDetected = false;
-      _impactWindowTimer?.cancel();
-      stopMonitoring(); // Stop so we don't trigger twice
+  void _analyzePostCrashMotion(List<double> values, double originalImpact) {
+    if (values.isEmpty) return;
 
-      onFallDetected(); // FIRE THE ALARM
+    // Calculate Variance (How much is it moving?)
+    // In a resting state (on floor), G should be stable ~9.8
+    double sum = values.reduce((a, b) => a + b);
+    double avg = sum / values.length;
+    
+    // Calculate Deviation
+    double variance = values.map((v) => pow(v - avg, 2)).reduce((a, b) => a + b) / values.length;
+    
+    debugPrint("📊 POST-CRASH VARIANCE: $variance");
+
+    if (variance < _threshMotionless) {
+      // LOW VARIANCE = Victim is not moving
+      debugPrint("🚨 FALL CONFIRMED: Victim is stationary.");
+      _fallController.add(FallEvent(originalImpact, DateTime.now(), "High"));
+    } else {
+      // HIGH VARIANCE = User picked up the phone / walked away
+      debugPrint("✅ FALSE ALARM: User resumed motion.");
     }
   }
 
-  void stopMonitoring() {
+  void disarm() {
+    _isArmed = false;
     _accelSubscription?.cancel();
-    _impactWindowTimer?.cancel();
-    _isMonitoring = false;
+    _immobilityTimer?.cancel();
+    _telemetryController.close();
+    _fallController.close();
+    debugPrint("🛡️ GRAVITY GUARD: DISARMED");
   }
 }
