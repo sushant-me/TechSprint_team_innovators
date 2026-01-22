@@ -1,12 +1,8 @@
 # Ghost Signal
-
 **Ghost Signal** is a Flutter-based **emergency alert and personal safety app** designed for **Nepal**.  
 It provides automated safety alerts during **accidents, earthquakes, landslides, or other emergencies**, using **sensors, Bluetooth, flashlight, siren, and text-to-speech alerts**.
-
 ---
-
 ## Features
-
 - **SOS Button:** Manual trigger for emergencies.
 - **High Alert Detection:** Detects natural disasters (earthquake, landslide) via APIs.
 - **Accident Detection:** Uses accelerometer and gyroscope to detect sudden impact.
@@ -16,13 +12,9 @@ It provides automated safety alerts during **accidents, earthquakes, landslides,
 - **Siren & Flashlight:** Activates to attract attention.
 - **Text-to-Speech Alerts:** Automated voice prompts simulate IVR for user confirmation.
 - **Profile Management:** Save your name and multiple emergency contacts.
-
 ---
-
 ## Installation
-
 1. **Clone the repository**
-
 ```bash
 git clone <your-repo-url>
 cd ghost_signal
@@ -32,21 +24,17 @@ cd ghost_signal
 ```
 flutter pub get
 ```
-
 4. **Run The app**
 ```
 flutter run
 ```
-
 # Required Permissions
-
 ### For Android:
 ```
 <uses-permission android:name="android.permission.READ_CONTACTS"/>
 <uses-permission android:name="android.permission.CAMERA"/>
 <uses-permission android:name="android.permission.VIBRATE"/>
 ```
-
 ### For iOS (Info.plist):
 ```
 <key>NSContactsUsageDescription</key>
@@ -54,7 +42,6 @@ flutter run
 <key>NSCameraUsageDescription</key>
 <string>Access flashlight for emergency alert.</string>
 ```
-
 # Packages Used
 
 flutter_tts – Text-to-Speech for voice prompts
@@ -70,7 +57,6 @@ flutter_bluetooth_serial – Send SOS messages to nearby devices
 torch_light – Flashlight control
 
 audioplayers – Play siren audio
-
 ## Project structure
 ```
 lib/
