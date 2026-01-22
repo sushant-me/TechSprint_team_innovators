@@ -1,6 +1,5 @@
 # Ghost Signal
-**Ghost Signal** is a Flutter-based **emergency alert and personal safety app** designed for **Nepal**.  
-It provides automated safety alerts during **accidents, earthquakes, landslides, or other emergencies**, using **sensors, Bluetooth, flashlight, siren, and text-to-speech alerts**.
+
 ---
 ## Features
 - **SOS Button:** Manual trigger for emergencies.
