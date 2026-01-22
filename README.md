@@ -71,9 +71,7 @@ lib/
 │  └─ accident_detection_service.dart
 └─ main.dart
 ```
-
 # How It Works
-
 - User opens the app and sets up name and emergency contacts in Profile.
 - User presses SOS button or a high-alert event is detected.
 - Countdown starts (15 sec) with siren, flashlight, and TTS prompt:
@@ -81,9 +79,7 @@ lib/
 - User presses I’m Safe → All stops
 - User presses Help Me → Messages sent to emergency contacts
 - No action → Automatic emergency messages sent
-
 ### Notes
-
 App works offline using Bluetooth to alert nearby devices.
 
 Multiple emergency contacts supported.
