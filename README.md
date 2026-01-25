@@ -1,4 +1,4 @@
-# Ghost Signal
+# Ghost Signal(name change)
 
 ---
 ## Features
