@@ -1,5 +1,5 @@
 # Ghost Signal(name change)
-
+(emergency)
 ---
 ## Features
 - **SOS Button:** Manual trigger for emergencies.
